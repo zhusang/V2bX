@@ -12,6 +12,17 @@ var _ buf.TimeoutReader = (*CounterReader)(nil)
 type CounterReader struct {
 	Reader  buf.TimeoutReader
 	Counter *atomic.Int64
+	Extra   *atomic.Int64
+}
+
+func (c *CounterReader) add(n int32) {
+	if n <= 0 {
+		return
+	}
+	c.Counter.Add(int64(n))
+	if c.Extra != nil {
+		c.Extra.Add(int64(n))
+	}
 }
 
 func (c *CounterReader) ReadMultiBufferTimeout(time.Duration) (buf.MultiBuffer, error) {
@@ -19,9 +30,7 @@ func (c *CounterReader) ReadMultiBufferTimeout(time.Duration) (buf.MultiBuffer, 
 	if err != nil {
 		return nil, err
 	}
-	if mb.Len() > 0 {
-		c.Counter.Add(int64(mb.Len()))
-	}
+	c.add(mb.Len())
 	return mb, nil
 }
 
@@ -30,8 +39,6 @@ func (c *CounterReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
 	if err != nil {
 		return nil, err
 	}
-	if mb.Len() > 0 {
-		c.Counter.Add(int64(mb.Len()))
-	}
+	c.add(mb.Len())
 	return mb, nil
 }

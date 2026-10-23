@@ -30,6 +30,14 @@
       "SendIP": "0.0.0.0",
       "DeviceOnlineMinTraffic": 200,
       "MinReportTraffic": 0,
+      // 按网站统计流量。默认关闭。开启后按 ReportInterval 秒上报原始字节，不参与计费。
+      // Granularity: "site" 归并到可注册域名，"host" 保留完整主机名。
+      // "SiteTraffic": {
+      //   "Enable": true,
+      //   "ReportInterval": 300,
+      //   "Granularity": "site",
+      //   "MaxSitesPerUser": 200
+      // },
       "TCPFastOpen": false,
       "SniffEnabled": true,
       "CertConfig": {

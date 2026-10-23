@@ -93,6 +93,10 @@ func (x *Xray) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic,
 	return nil, nil
 }
 
+func (x *Xray) GetSiteTrafficSlice(tag string) ([]panel.SiteTraffic, error) {
+	return siteTrafficFor(tag, x.users.uidMap, &x.users.mapLock)
+}
+
 func (c *Xray) AddUsers(p *vCore.AddUsersParams) (added int, err error) {
 	c.users.mapLock.Lock()
 	defer c.users.mapLock.Unlock()

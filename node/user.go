@@ -2,6 +2,7 @@ package node
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/InazumaV/V2bX/api/panel"
 	log "github.com/sirupsen/logrus"
@@ -56,6 +57,26 @@ func (c *Controller) reportUserTrafficTask() (err error) {
 	}
 
 	userTraffic = nil
+	return nil
+}
+
+func (c *Controller) reportSiteTrafficTask() error {
+	c.siteMu.Lock()
+	defer c.siteMu.Unlock()
+	c.siteReport.run(
+		func() (int64, int64) {
+			end := time.Now().Unix()
+			start := end - int64(c.SiteTraffic.ReportInterval)
+			return start, end
+		},
+		func() ([]panel.SiteTraffic, error) {
+			return c.server.GetSiteTrafficSlice(c.tag)
+		},
+		c.apiClient.ReportSiteTraffic,
+		func(msg string) {
+			log.WithField("tag", c.tag).Warn(msg)
+		},
+	)
 	return nil
 }
 

@@ -125,6 +125,14 @@ func (s *Selector) AddUsers(p *AddUsersParams) (added int, err error) {
 	return t.(Core).AddUsers(p)
 }
 
+func (s *Selector) GetSiteTrafficSlice(tag string) ([]panel.SiteTraffic, error) {
+	t, e := s.nodes.Load(tag)
+	if !e {
+		return nil, errors.New("the node is not have")
+	}
+	return t.(Core).GetSiteTrafficSlice(tag)
+}
+
 func (s *Selector) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic, error) {
 	t, e := s.nodes.Load(tag)
 	if !e {

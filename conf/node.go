@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 
 	"github.com/InazumaV/V2bX/common/json5"
+	log "github.com/sirupsen/logrus"
 )
 
 type NodeConfig struct {
@@ -60,6 +61,9 @@ func (n NodeConfig) MarshalJSON() ([]byte, error) {
 	}
 	if n.Options.ReportMinTraffic != 0 {
 		m["ReportMinTraffic"] = n.Options.ReportMinTraffic
+	}
+	if !n.Options.SiteTraffic.IsZero() {
+		m["SiteTraffic"] = n.Options.SiteTraffic
 	}
 	if !isZeroLimitConfig(n.Options.LimitConfig) {
 		m["LimitConfig"] = n.Options.LimitConfig
@@ -219,19 +223,20 @@ func (n *NodeConfig) UnmarshalJSON(data []byte) (err error) {
 }
 
 type Options struct {
-	Name                   string          `json:"Name"`
-	Core                   string          `json:"Core"`
-	CoreName               string          `json:"CoreName"`
-	ListenIP               string          `json:"ListenIP"`
-	SendIP                 string          `json:"SendIP"`
-	DeviceOnlineMinTraffic int64           `json:"DeviceOnlineMinTraffic"`
-	ReportMinTraffic       int64           `json:"ReportMinTraffic"`
-	LimitConfig            LimitConfig     `json:"LimitConfig"`
-	RawOptions             json.RawMessage `json:"RawOptions"`
-	XrayOptions            *XrayOptions    `json:"XrayOptions"`
-	SingOptions            *SingOptions    `json:"SingOptions"`
-	Hysteria2ConfigPath    string          `json:"Hysteria2ConfigPath"`
-	CertConfig             *CertConfig     `json:"CertConfig"`
+	Name                   string            `json:"Name"`
+	Core                   string            `json:"Core"`
+	CoreName               string            `json:"CoreName"`
+	ListenIP               string            `json:"ListenIP"`
+	SendIP                 string            `json:"SendIP"`
+	DeviceOnlineMinTraffic int64             `json:"DeviceOnlineMinTraffic"`
+	ReportMinTraffic       int64             `json:"ReportMinTraffic"`
+	SiteTraffic            SiteTrafficConfig `json:"SiteTraffic"`
+	LimitConfig            LimitConfig       `json:"LimitConfig"`
+	RawOptions             json.RawMessage   `json:"RawOptions"`
+	XrayOptions            *XrayOptions      `json:"XrayOptions"`
+	SingOptions            *SingOptions      `json:"SingOptions"`
+	Hysteria2ConfigPath    string            `json:"Hysteria2ConfigPath"`
+	CertConfig             *CertConfig       `json:"CertConfig"`
 }
 
 func (o *Options) UnmarshalJSON(data []byte) error {
@@ -243,16 +248,50 @@ func (o *Options) UnmarshalJSON(data []byte) error {
 	switch o.Core {
 	case "xray":
 		o.XrayOptions = NewXrayOptions()
-		return json.Unmarshal(data, o.XrayOptions)
+		err = json.Unmarshal(data, o.XrayOptions)
 	case "sing":
 		o.SingOptions = NewSingOptions()
-		return json.Unmarshal(data, o.SingOptions)
+		err = json.Unmarshal(data, o.SingOptions)
 	case "hysteria2":
 		o.RawOptions = data
-		return nil
 	default:
 		o.Core = ""
 		o.RawOptions = data
 	}
+	if err != nil {
+		return err
+	}
+	o.SiteTraffic.Normalize()
 	return nil
+}
+
+// SiteTrafficConfig turns on per-site traffic collection for one node.
+type SiteTrafficConfig struct {
+	Enable          bool   `json:"Enable"`
+	ReportInterval  int    `json:"ReportInterval"`
+	Granularity     string `json:"Granularity"`
+	MaxSitesPerUser int    `json:"MaxSitesPerUser"`
+}
+
+func (s SiteTrafficConfig) IsZero() bool {
+	return !s.Enable && s.ReportInterval == 0 && s.Granularity == "" && s.MaxSitesPerUser == 0
+}
+
+// Normalize fills defaults and clamps ReportInterval to at least 60 seconds.
+func (s *SiteTrafficConfig) Normalize() {
+	if s == nil || s.IsZero() {
+		return
+	}
+	if s.ReportInterval == 0 {
+		s.ReportInterval = 300
+	} else if s.ReportInterval < 60 {
+		log.Warnf("SiteTraffic.ReportInterval %d is below 60, using 60", s.ReportInterval)
+		s.ReportInterval = 60
+	}
+	if s.Granularity == "" {
+		s.Granularity = "site"
+	}
+	if s.MaxSitesPerUser <= 0 {
+		s.MaxSitesPerUser = 200
+	}
 }

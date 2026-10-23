@@ -60,6 +60,20 @@ func (h *Hysteria2) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeIn
 	return nil
 }
 
+func (h *Hysteria2) GetSiteTrafficSlice(tag string) ([]panel.SiteTraffic, error) {
+	n, ok := h.Hy2nodes[tag]
+	if !ok {
+		return nil, nil
+	}
+	hook, ok := n.TrafficLogger.(*HookServer)
+	if !ok {
+		return nil, nil
+	}
+	h.Auth.mutex.RLock()
+	defer h.Auth.mutex.RUnlock()
+	return hook.harvest(h.Auth.usersMap), nil
+}
+
 func (h *Hysteria2) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic, error) {
 	trafficSlice := make([]panel.UserTraffic, 0)
 	h.Auth.mutex.RLock()

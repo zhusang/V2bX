@@ -134,6 +134,10 @@ func (b *Sing) GetUserTraffic(tag, uuid string, reset bool) (up int64, down int6
 	return 0, 0
 }
 
+func (b *Sing) GetSiteTrafficSlice(tag string) ([]panel.SiteTraffic, error) {
+	return siteTrafficFor(tag, b.users.uidMap, &b.users.mapLock)
+}
+
 func (b *Sing) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic, error) {
 	trafficSlice := make([]panel.UserTraffic, 0)
 	hook := b.hookServer

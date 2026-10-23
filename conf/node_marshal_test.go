@@ -235,3 +235,38 @@ func TestNodeMarshal_IncludeDirective_Preserved(t *testing.T) {
 		t.Errorf("Include node should not emit inlined fields, got %s", data)
 	}
 }
+
+func TestNodeMarshal_SiteTraffic_RoundTrip(t *testing.T) {
+	n := NodeConfig{
+		ApiConfig: ApiConfig{APIHost: "h", Key: "k", NodeID: 1, NodeType: "vless", Timeout: 30},
+		Options: Options{
+			Core:     "xray",
+			ListenIP: "0.0.0.0",
+			SendIP:   "0.0.0.0",
+			SiteTraffic: SiteTrafficConfig{
+				Enable:          true,
+				ReportInterval:  120,
+				Granularity:     "host",
+				MaxSitesPerUser: 50,
+			},
+		},
+	}
+	got := roundTrip(t, n)
+	if !reflect.DeepEqual(got.Options.SiteTraffic, n.Options.SiteTraffic) {
+		t.Errorf("SiteTraffic lost: got %+v want %+v", got.Options.SiteTraffic, n.Options.SiteTraffic)
+	}
+}
+
+func TestSiteTrafficNormalize_ClampsInterval(t *testing.T) {
+	raw := []byte(`{"Core":"xray","ListenIP":"0.0.0.0","SendIP":"0.0.0.0","SiteTraffic":{"Enable":true,"ReportInterval":10}}`)
+	var opt Options
+	if err := stdjson.Unmarshal(raw, &opt); err != nil {
+		t.Fatal(err)
+	}
+	if opt.SiteTraffic.ReportInterval != 60 {
+		t.Fatalf("interval = %d, want 60", opt.SiteTraffic.ReportInterval)
+	}
+	if opt.SiteTraffic.Granularity != "site" || opt.SiteTraffic.MaxSitesPerUser != 200 {
+		t.Fatalf("defaults not applied: %+v", opt.SiteTraffic)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/InazumaV/V2bX/api/panel"
+	"github.com/InazumaV/V2bX/common/sitestat"
 	"github.com/InazumaV/V2bX/conf"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/inbound"
@@ -17,6 +18,7 @@ type DNSConfig struct {
 }
 
 func (c *Xray) AddNode(tag string, info *panel.NodeInfo, config *conf.Options) error {
+	setSiteCollector(tag, config)
 	c.nodeReportMinTrafficBytes[tag] = config.ReportMinTraffic * 1024
 	err := updateDNSConfig(info)
 	if err != nil {
@@ -72,6 +74,7 @@ func (c *Xray) addOutbound(config *core.OutboundHandlerConfig) error {
 }
 
 func (c *Xray) DelNode(tag string) error {
+	sitestat.Disable(tag)
 	err := c.removeInbound(tag)
 	if err != nil {
 		return fmt.Errorf("remove in error: %s", err)

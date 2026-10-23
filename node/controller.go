@@ -3,6 +3,7 @@ package node
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/InazumaV/V2bX/api/panel"
 	"github.com/InazumaV/V2bX/common/task"
@@ -23,6 +24,9 @@ type Controller struct {
 	info                      *panel.NodeInfo
 	nodeInfoMonitorPeriodic   *task.Task
 	userReportPeriodic        *task.Task
+	siteTrafficPeriodic       *task.Task
+	siteReport                siteReportState
+	siteMu                    sync.Mutex
 	renewCertPeriodic         *task.Task
 	dynamicSpeedLimitPeriodic *task.Task
 	onlineIpReportPeriodic    *task.Task
@@ -106,6 +110,12 @@ func (c *Controller) Close() error {
 	if c.userReportPeriodic != nil {
 		c.userReportPeriodic.Close()
 	}
+	if c.siteTrafficPeriodic != nil {
+		c.siteTrafficPeriodic.Close()
+	}
+	c.siteMu.Lock()
+	c.siteReport.queue = nil
+	c.siteMu.Unlock()
 	if c.renewCertPeriodic != nil {
 		c.renewCertPeriodic.Close()
 	}

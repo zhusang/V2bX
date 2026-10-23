@@ -12,6 +12,7 @@ import (
 	"github.com/InazumaV/V2bX/limiter"
 
 	"github.com/InazumaV/V2bX/common/counter"
+	"github.com/InazumaV/V2bX/common/sitestat"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	N "github.com/sagernet/sing/common/network"
@@ -71,7 +72,7 @@ func (h *HookServer) RoutedConnection(_ context.Context, conn net.Conn, m adapte
 	} else {
 		t = c.(*counter.TrafficCounter)
 	}
-	conn = counter.NewConnCounter(conn, t.GetCounter(m.User))
+	conn = counter.NewConnCounter(conn, t.GetCounter(m.User), openSite(m))
 	return conn
 }
 
@@ -119,6 +120,20 @@ func (h *HookServer) RoutedPacketConnection(_ context.Context, conn N.PacketConn
 	} else {
 		t = c.(*counter.TrafficCounter)
 	}
-	conn = counter.NewPacketConnCounter(conn, t.GetCounter(m.User))
+	conn = counter.NewPacketConnCounter(conn, t.GetCounter(m.User), openSite(m))
+	return conn
+}
+
+func openSite(m adapter.InboundContext) *sitestat.Conn {
+	col := sitestat.Get(m.Inbound)
+	if col == nil {
+		return nil
+	}
+	conn := col.Open(m.User)
+	target := m.Domain
+	if target == "" {
+		target = m.Destination.AddrString()
+	}
+	conn.Bind(target)
 	return conn
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/InazumaV/V2bX/common/counter"
 	"github.com/InazumaV/V2bX/common/rate"
+	"github.com/InazumaV/V2bX/common/sitestat"
 	"github.com/InazumaV/V2bX/limiter"
 
 	"github.com/xtls/xray-core/app/dispatcher"
@@ -148,7 +149,7 @@ func (*DefaultDispatcher) Start() error {
 // Close implements common.Closable.
 func (*DefaultDispatcher) Close() error { return nil }
 
-func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*transport.Link, *transport.Link, *limiter.Limiter, error) {
+func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*transport.Link, *transport.Link, *limiter.Limiter, *sitestat.Conn, error) {
 	opt := pipe.OptionsFromContext(ctx)
 	uplinkReader, uplinkWriter := pipe.New(opt...)
 	downlinkReader, downlinkWriter := pipe.New(opt...)
@@ -171,6 +172,7 @@ func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*
 
 	var limit *limiter.Limiter
 	var err error
+	var siteConn *sitestat.Conn
 	if user != nil && len(user.Email) > 0 {
 		limit, err = limiter.GetLimiter(sessionInbound.Tag)
 		if err != nil {
@@ -179,7 +181,7 @@ func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*
 			common.Close(inboundLink.Writer)
 			common.Interrupt(outboundLink.Reader)
 			common.Interrupt(inboundLink.Reader)
-			return nil, nil, nil, errors.New("get limiter ", sessionInbound.Tag, " error: ", err)
+			return nil, nil, nil, nil, errors.New("get limiter ", sessionInbound.Tag, " error: ", err)
 		}
 		// Speed Limit and Device Limit
 		w, reject := limit.CheckLimit(user.Email,
@@ -192,7 +194,7 @@ func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*
 			common.Close(inboundLink.Writer)
 			common.Interrupt(outboundLink.Reader)
 			common.Interrupt(inboundLink.Reader)
-			return nil, nil, nil, errors.New("Limited ", user.Email, " by conn or ip")
+			return nil, nil, nil, nil, errors.New("Limited ", user.Email, " by conn or ip")
 		}
 		var lm *LinkManager
 		if lmloaded, ok := d.LinkManagers.Load(user.Email); !ok {
@@ -223,19 +225,21 @@ func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*
 		}
 
 		ts := t.GetCounter(user.Email)
-		upcounter := &counter.XrayTrafficCounter{V: &ts.UpCounter}
-		downcounter := &counter.XrayTrafficCounter{V: &ts.DownCounter}
+		siteConn = openSiteConn(sessionInbound.Tag, user.Email)
+		upExtra, downExtra := siteExtras(siteConn)
+		upcounter := &counter.XrayTrafficCounter{V: &ts.UpCounter, Extra: upExtra}
+		downcounter := &counter.XrayTrafficCounter{V: &ts.DownCounter, Extra: downExtra}
 		inboundLink.Writer = &dispatcher.SizeStatWriter{
 			Counter: upcounter,
-			Writer:  inboundLink.Writer,
+			Writer:  halfWriter(inboundLink.Writer, siteConn, sitestat.HalfUp),
 		}
 		outboundLink.Writer = &dispatcher.SizeStatWriter{
 			Counter: downcounter,
-			Writer:  outboundLink.Writer,
+			Writer:  halfWriter(outboundLink.Writer, siteConn, sitestat.HalfDown),
 		}
 	}
 
-	return inboundLink, outboundLink, limit, nil
+	return inboundLink, outboundLink, limit, siteConn, nil
 }
 
 func (d *DefaultDispatcher) shouldOverride(ctx context.Context, result SniffResult, request session.SniffingRequest, destination net.Destination) bool {
@@ -302,12 +306,13 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 		ctx = session.ContextWithContent(ctx, content)
 	}
 	sniffingRequest := content.SniffingRequest
-	inbound, outbound, l, err := d.getLink(ctx, destination.Network)
+	inbound, outbound, l, siteConn, err := d.getLink(ctx, destination.Network)
 	if err != nil {
 		return nil, err
 	}
+	watchSiteConn(ctx, siteConn)
 	if !sniffingRequest.Enabled {
-		go d.routedDispatch(ctx, outbound, destination, l, "")
+		go d.routedDispatch(ctx, outbound, destination, l, "", siteConn)
 	} else {
 		go func() {
 			cReader := &cachedReader{
@@ -336,7 +341,7 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 					ob.Target = destination
 				}
 			}
-			d.routedDispatch(ctx, outbound, destination, l, content.Protocol)
+			d.routedDispatch(ctx, outbound, destination, l, content.Protocol, siteConn)
 		}()
 	}
 	return inbound, nil
@@ -369,6 +374,7 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 
 	var limit *limiter.Limiter
 	var err error
+	var siteConn *sitestat.Conn
 	if user != nil && len(user.Email) > 0 {
 		limit, err = limiter.GetLimiter(sessionInbound.Tag)
 		if err != nil {
@@ -415,21 +421,25 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 		}
 
 		ts := t.GetCounter(user.Email)
-		downcounter := &counter.XrayTrafficCounter{V: &ts.DownCounter}
+		siteConn = openSiteConn(sessionInbound.Tag, user.Email)
+		upExtra, downExtra := siteExtras(siteConn)
+		downcounter := &counter.XrayTrafficCounter{V: &ts.DownCounter, Extra: downExtra}
 		outbound.Reader = &CounterReader{
 			Reader:  &buf.TimeoutWrapperReader{Reader: outbound.Reader},
 			Counter: &ts.UpCounter,
+			Extra:   upExtra,
 		}
 		lm.AddLink(managedWriter, outbound.Reader)
 		outbound.Writer = &dispatcher.SizeStatWriter{
 			Counter: downcounter,
-			Writer:  outbound.Writer,
+			Writer:  fullWriter(outbound.Writer, siteConn),
 		}
 	}
+	watchSiteConn(ctx, siteConn)
 
 	sniffingRequest := content.SniffingRequest
 	if !sniffingRequest.Enabled {
-		d.routedDispatch(ctx, outbound, destination, limit, "")
+		d.routedDispatch(ctx, outbound, destination, limit, "", siteConn)
 	} else {
 		cReader := &cachedReader{
 			reader: outbound.Reader.(buf.TimeoutReader),
@@ -457,7 +467,7 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 				ob.Target = destination
 			}
 		}
-		d.routedDispatch(ctx, outbound, destination, limit, content.Protocol)
+		d.routedDispatch(ctx, outbound, destination, limit, content.Protocol, siteConn)
 	}
 
 	return nil
@@ -519,7 +529,7 @@ func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, netw
 	return contentResult, contentErr
 }
 
-func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.Link, destination net.Destination, l *limiter.Limiter, protocol string) {
+func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.Link, destination net.Destination, l *limiter.Limiter, protocol string, siteConn *sitestat.Conn) {
 	outbounds := session.OutboundsFromContext(ctx)
 	ob := outbounds[len(outbounds)-1]
 
@@ -546,6 +556,7 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 					destStr))
 				common.Close(link.Writer)
 				common.Interrupt(link.Reader)
+				siteConn.Close()
 				return
 			}
 			if len(protocol) != 0 {
@@ -556,6 +567,7 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 						protocol))
 					common.Close(link.Writer)
 					common.Interrupt(link.Reader)
+					siteConn.Close()
 					return
 				}
 			}
@@ -577,6 +589,7 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 			errors.LogError(ctx, "non existing tag for platform initialized detour: ", forcedOutboundTag)
 			common.Close(link.Writer)
 			common.Interrupt(link.Reader)
+			siteConn.Close()
 			return
 		}
 	} else if d.router != nil {
@@ -594,6 +607,7 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 				errors.LogWarning(ctx, "non existing outTag: ", outTag)
 				common.Close(link.Writer)
 				common.Interrupt(link.Reader)
+				siteConn.Close()
 				return // DO NOT CHANGE: the traffic shouldn't be processed by default outbound if the specified outbound tag doesn't exist (yet), e.g., VLESS Reverse Proxy
 			}
 		} else {
@@ -609,6 +623,7 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 		errors.LogInfo(ctx, "default outbound handler not exist")
 		common.Close(link.Writer)
 		common.Interrupt(link.Reader)
+		siteConn.Close()
 		return
 	}
 
@@ -628,5 +643,6 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 		log.Record(accessMessage)
 	}
 
+	bindSite(siteConn, ob, destination)
 	handler.Dispatch(ctx, link)
 }

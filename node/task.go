@@ -26,6 +26,18 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 	_ = c.nodeInfoMonitorPeriodic.Start(false)
 	log.WithField("tag", c.tag).Info("Start report node status")
 	_ = c.userReportPeriodic.Start(false)
+	if c.SiteTraffic.Enable {
+		c.SiteTraffic.Normalize()
+		c.siteMu.Lock()
+		c.siteReport.reset()
+		c.siteMu.Unlock()
+		c.siteTrafficPeriodic = &task.Task{
+			Interval: time.Duration(c.SiteTraffic.ReportInterval) * time.Second,
+			Execute:  c.reportSiteTrafficTask,
+		}
+		log.WithField("tag", c.tag).Info("Start report site traffic")
+		_ = c.siteTrafficPeriodic.Start(false)
+	}
 	if node.Security == panel.Tls {
 		switch c.CertConfig.CertMode {
 		case "none", "", "file", "self":
@@ -84,6 +96,9 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			c.userList = newU
 		}
 		c.traffic = make(map[string]int64)
+		c.siteMu.Lock()
+		c.siteReport.reset()
+		c.siteMu.Unlock()
 		// Remove old node
 		log.WithField("tag", c.tag).Info("Node changed, reload")
 		err = c.server.DelNode(c.tag)
